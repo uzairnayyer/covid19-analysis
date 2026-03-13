@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COVID-19 Global Analysis</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>COVID-19 Global Data Analysis</h1>
+    </header>
+
+    <main>
+        <section id="overview" class="section">
+            <h2>Global Overview</h2>
+            <div id="overview-stats" class="stats-grid">
+                <div class="stat-card cases">
+                    <h3>Total Cases</h3>
+                    <p id="total-cases">Loading...</p>
+                </div>
+                <div class="stat-card deaths">
+                    <h3>Total Deaths</h3>
+                    <p id="total-deaths">Loading...</p>
+                </div>
+                <div class="stat-card countries">
+                    <h3>Countries Affected</h3>
+                    <p id="countries-affected">Loading...</p>
+                </div>
+                <div class="stat-card rate">
+                    <h3>Global Death Rate</h3>
+                    <p id="global-death-rate">Loading...</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="world-map" class="section">
+            <h2>World Map</h2>
+            <p class="hint">Hover over any country to see detailed COVID-19 stats</p>
+            <div id="map-chart" class="chart-container">
+                <p class="loading">Loading world map...</p>
+            </div>
+        </section>
+
+        <section id="top-countries" class="section">
+            <h2>Top Countries Analysis</h2>
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('cases')">Top Cases</button>
+                <button class="tab-btn" onclick="switchTab('deaths')">Top Deaths</button>
+                <button class="tab-btn" onclick="switchTab('death-rates')">Death Rates</button>
+            </div>
+            <div id="top-chart" class="chart-container">
+                <p class="loading">Loading data...</p>
+            </div>
+        </section>
+
+        <section id="continents" class="section">
+            <h2>Continental Comparison</h2>
+            <div id="continent-chart" class="chart-container">
+                <p class="loading">Loading continental data...</p>
+            </div>
+            <div id="continent-table"></div>
+        </section>
+
+        <section id="country-analysis" class="section">
+            <h2>Country-Specific Analysis</h2>
+            <div class="selector">
+                <label for="country-select">Select Country:</label>
+                <select id="country-select" onchange="loadCountryData()">
+                    {% for country in countries %}
+                    <option value="{{ country }}" {% if country == 'Pakistan' %}selected{% endif %}>{{ country }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div id="country-summary" class="summary-box"></div>
+            <div id="country-chart" class="chart-container">
+                <p class="loading">Loading country data...</p>
+            </div>
+            <div class="tabs">
+                <button class="tab-btn" onclick="loadCountryMonthly()">Monthly Trends</button>
+                <button class="tab-btn" onclick="loadCountryDaily()">Daily with 7-Day Avg</button>
+            </div>
+            <div id="trends-chart" class="chart-container"></div>
+        </section>
+
+        <section id="comparison" class="section">
+            <h2>Multi Country Comparison</h2>
+            <p class="hint">Select countries to compare COVID-19 daily new cases trends</p>
+            <div class="selector">
+                <select id="compare-select" multiple size="8">
+                    {% for country in countries %}
+                    <option value="{{ country }}">{{ country }}</option>
+                    {% endfor %}
+                </select>
+                <button class="compare-btn" onclick="loadComparison()">Compare Selected Countries</button>
+            </div>
+            <div id="comparison-chart" class="chart-container">
+                <p class="placeholder">Select countries above and click Compare to view comparison chart</p>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const plotConfig = {
+            responsive: true,
+            displayModeBar: true,
+            displaylogo: false,
+            modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+            toImageButtonOptions: {
+                format: 'png',
+                filename: 'covid_chart',
+                height: 600,
+                width: 1200,
+                scale: 2
+            }
+        };
+
+        let currentTopTab = 'cases';
+
+        function formatNumber(num) {
+            if (num >= 1000000000) return (num / 1000000000).toFixed(2) + 'B';
+            if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
+            return num.toString();
+        }
+
+        function renderChart(elementId, chartData) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = '';
+            Plotly.newPlot(element, chartData.data, chartData.layout, plotConfig);
+        }
+
+        function showLoading(elementId, message) {
+            document.getElementById(elementId).innerHTML = '<p class="loading">' + message + '</p>';
+        }
+
+        function showError(elementId, message) {
+            document.getElementById(elementId).innerHTML = '<p class="error">' + message + '</p>';
+        }
+
+        function switchTab(tab) {
+            currentTopTab = tab;
+            document.querySelectorAll('#top-countries .tab-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            if (tab === 'cases') loadTopCases();
+            else if (tab === 'deaths') loadTopDeaths();
+            else if (tab === 'death-rates') loadDeathRates();
+        }
+
+        async function loadOverview() {
+            try {
+                const response = await fetch('/api/overview');
+                const data = await response.json();
+                document.getElementById('total-cases').textContent = formatNumber(data.total_cases);
+                document.getElementById('total-deaths').textContent = formatNumber(data.total_deaths);
+                document.getElementById('countries-affected').textContent = data.countries_affected;
+                document.getElementById('global-death-rate').textContent = data.global_death_rate + '%';
+            } catch (error) {
+                console.error('Error loading overview:', error);
+            }
+        }
+
+        async function loadWorldMap() {
+            try {
+                const response = await fetch('/api/world-map');
+                const data = await response.json();
+                if (data.error) {
+                    showError('map-chart', data.error);
+                } else {
+                    renderChart('map-chart', data.chart);
+                }
+            } catch (error) {
+                showError('map-chart', 'Error loading map');
+            }
+        }
+
+        async function loadTopCases() {
+            showLoading('top-chart', 'Loading top cases data...');
+            try {
+                const response = await fetch('/api/top-cases');
+                const data = await response.json();
+                renderChart('top-chart', data.chart);
+            } catch (error) {
+                showError('top-chart', 'Error loading data');
+            }
+        }
+
+        async function loadTopDeaths() {
+            showLoading('top-chart', 'Loading top deaths data...');
+            try {
+                const response = await fetch('/api/top-deaths');
+                const data = await response.json();
+                renderChart('top-chart', data.chart);
+            } catch (error) {
+                showError('top-chart', 'Error loading data');
+            }
+        }
+
+        async function loadDeathRates() {
+            showLoading('top-chart', 'Loading death rates data...');
+            try {
+                const response = await fetch('/api/death-rates');
+                const data = await response.json();
+                renderChart('top-chart', data.chart);
+            } catch (error) {
+                showError('top-chart', 'Error loading data');
+            }
+        }
+
+        async function loadContinents() {
+            try {
+                const response = await fetch('/api/continents');
+                const data = await response.json();
+                renderChart('continent-chart', data.chart);
+                
+                if (data.data && data.data.length > 0) {
+                    let tableHTML = '<table><thead><tr><th>Continent</th><th>Total Cases</th><th>Total Deaths</th><th>Cases/Million</th><th>Death Rate</th></tr></thead><tbody>';
+                    data.data.forEach(row => {
+                        tableHTML += '<tr><td>' + row.continent + '</td><td>' + formatNumber(row.total_cases) + 
+                                   '</td><td>' + formatNumber(row.total_deaths) + '</td><td>' + formatNumber(row.cases_per_million) + '</td><td>' + row.death_rate + '%</td></tr>';
+                    });
+                    tableHTML += '</tbody></table>';
+                    document.getElementById('continent-table').innerHTML = tableHTML;
+                }
+            } catch (error) {
+                showError('continent-chart', 'Error loading data');
+            }
+        }
+
+        async function loadCountryData() {
+            const country = document.getElementById('country-select').value;
+            showLoading('country-chart', 'Loading data for ' + country + '...');
+            document.getElementById('trends-chart').innerHTML = '';
+            
+            try {
+                const response = await fetch('/api/country/' + encodeURIComponent(country));
+                const data = await response.json();
+                
+                if (data.error && !data.chart) {
+                    showError('country-chart', data.error);
+                    document.getElementById('country-summary').innerHTML = '';
+                    return;
+                }
+                
+                document.getElementById('country-summary').innerHTML = 
+                    '<h3>📍 ' + country + '</h3>' +
+                    '<div class="summary-stats">' +
+                    '<span><strong>Total Cases:</strong> ' + formatNumber(data.summary.total_cases) + '</span>' +
+                    '<span><strong>Total Deaths:</strong> ' + formatNumber(data.summary.total_deaths) + '</span>' +
+                    '<span><strong>Latest Data:</strong> ' + data.summary.latest_date + '</span>' +
+                    '</div>';
+                
+                renderChart('country-chart', data.chart);
+            } catch (error) {
+                showError('country-chart', 'Error loading data');
+            }
+        }
+
+        async function loadCountryMonthly() {
+            const country = document.getElementById('country-select').value;
+            showLoading('trends-chart', 'Loading monthly trends for ' + country + '...');
+            
+            try {
+                const response = await fetch('/api/country-monthly/' + encodeURIComponent(country));
+                const data = await response.json();
+                renderChart('trends-chart', data.chart);
+            } catch (error) {
+                showError('trends-chart', 'Error loading data');
+            }
+        }
+
+        async function loadCountryDaily() {
+            const country = document.getElementById('country-select').value;
+            showLoading('trends-chart', 'Loading daily trends for ' + country + '...');
+            
+            try {
+                const response = await fetch('/api/country-daily/' + encodeURIComponent(country));
+                const data = await response.json();
+                renderChart('trends-chart', data.chart);
+            } catch (error) {
+                showError('trends-chart', 'Error loading data');
+            }
+        }
+
+        async function loadComparison() {
+            const select = document.getElementById('compare-select');
+            const selected = Array.from(select.selectedOptions).map(opt => opt.value);
+            
+            if (selected.length === 0) {
+                showError('comparison-chart', 'Please select at least one country to compare');
+                return;
+            }
+            
+            if (selected.length === 1) {
+                showError('comparison-chart', 'Please select at least 2 countries for comparison');
+                return;
+            }
+            
+            showLoading('comparison-chart', 'Loading comparison for ' + selected.length + ' countries...');
+            
+            try {
+                const params = selected.map(c => 'countries=' + encodeURIComponent(c)).join('&');
+                const response = await fetch('/api/compare?' + params);
+                const data = await response.json();
+                renderChart('comparison-chart', data.chart);
+            } catch (error) {
+                showError('comparison-chart', 'Error loading data');
+            }
+        }
+
+        async function initializePage() {
+            await loadOverview();
+            await loadWorldMap();
+            await loadTopCases();
+            await loadContinents();
+            await loadCountryData();
+        }
+
+        initializePage();
+    </script>
+</body>
+</html>
